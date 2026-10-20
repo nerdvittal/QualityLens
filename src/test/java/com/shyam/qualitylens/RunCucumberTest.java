@@ -14,5 +14,9 @@ import org.junit.platform.suite.api.SelectPackages;
         key = Constants.GLUE_PROPERTY_NAME,
         value = "com.shyam.qualitylens.steps"
 )
+@ConfigurationParameter(
+        key = Constants.PLUGIN_PROPERTY_NAME,
+        value = "html:target/cucumber-report.html"
+)
 public class RunCucumberTest {
 }
