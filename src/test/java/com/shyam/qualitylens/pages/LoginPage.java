@@ -25,6 +25,15 @@ public class LoginPage {
     @FindBy(id = "user-name")
     private WebElement usernameField;
 
+    @FindBy(id = "password")
+    private WebElement passwordField;
+
+    @FindBy(id = "login-button")
+    private WebElement loginButton;
+
+    @FindBy(css = ".title")
+    private WebElement productsTitle;
+
     public LoginPage(BrowserSession browserSession) {
         this.browserSession = browserSession;
         this.baseUrl = resolveBaseUrl(System.getenv(BASE_URL_ENVIRONMENT_VARIABLE));
@@ -82,5 +91,25 @@ public class LoginPage {
 
         WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
         wait.until(ExpectedConditions.visibilityOf(usernameField));
+    }
+
+    public void logIn(String username, String password) {
+        initializeElements();
+
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+        wait.until(ExpectedConditions.visibilityOf(usernameField)).sendKeys(username);
+        wait.until(ExpectedConditions.visibilityOf(passwordField)).sendKeys(password);
+        wait.until(ExpectedConditions.elementToBeClickable(loginButton)).click();
+    }
+
+    public void verifyProductsPageIsDisplayed() {
+        initializeElements();
+
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+        String actualTitle = wait.until(ExpectedConditions.visibilityOf(productsTitle)).getText();
+        if (!"Products".equals(actualTitle)) {
+            throw new AssertionError(
+                    "Expected Products page title to be 'Products' but was '" + actualTitle + "'.");
+        }
     }
 }
