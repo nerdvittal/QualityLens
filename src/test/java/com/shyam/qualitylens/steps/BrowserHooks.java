@@ -20,14 +20,29 @@ public class BrowserHooks {
 
     @After
     public void closeBrowser(Scenario scenario) {
+        RuntimeException screenshotException = null;
         try {
             if (scenario.isFailed()) {
                 byte[] screenshot = ((TakesScreenshot) browserSession.getDriver())
                         .getScreenshotAs(OutputType.BYTES);
                 scenario.attach(screenshot, "image/png", "Failure screenshot");
             }
+        } catch (RuntimeException exception) {
+            screenshotException = exception;
         } finally {
-            browserSession.close();
+            try {
+                browserSession.close();
+            } catch (RuntimeException cleanupException) {
+                if (screenshotException == null) {
+                    throw cleanupException;
+                }
+                if (screenshotException != cleanupException) {
+                    screenshotException.addSuppressed(cleanupException);
+                }
+            }
+        }
+        if (screenshotException != null) {
+            throw screenshotException;
         }
     }
 }

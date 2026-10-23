@@ -16,7 +16,7 @@ import org.junit.platform.suite.api.SelectPackages;
 )
 @ConfigurationParameter(
         key = Constants.PLUGIN_PROPERTY_NAME,
-        value = "html:target/cucumber-report.html"
+        value = "html:target/cucumber-report.html,json:target/first-run.json,rerun:target/first-run-rerun.txt"
 )
 public class RunCucumberTest {
 }
