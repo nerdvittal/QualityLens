@@ -76,17 +76,22 @@ public final class RetryWorkflow {
         int firstRunExitStatus;
         try {
             firstRunExitStatus = executionSteps.runFirstRun(paths);
-        } catch (IOException exception) {
+        } catch (IOException | RuntimeException exception) {
             firstRunExitStatus = -1;
             executionErrors.add("First-run execution failed: " + message(exception));
         }
-        boolean retryAttempted = containsRerunEntries(paths.firstRunRerun());
+        boolean retryAttempted = false;
+        try {
+            retryAttempted = containsRerunEntries(paths.firstRunRerun());
+        } catch (IOException | RuntimeException exception) {
+            executionErrors.add("Could not inspect first-run rerun file: " + message(exception));
+        }
         Optional<Integer> retryExitStatus = Optional.empty();
         if (retryAttempted) {
             try {
                 retryExitStatus = Optional.of(
                         executionSteps.runRetry(paths.firstRunRerun(), paths));
-            } catch (IOException | IllegalArgumentException exception) {
+            } catch (IOException | RuntimeException exception) {
                 executionErrors.add("Retry execution failed: " + message(exception));
             }
         }
@@ -96,10 +101,14 @@ public final class RetryWorkflow {
                 : Optional.empty();
         RetryClassification classification = new RetryClassifier().classify(
                 paths.firstRunJson(), paths.firstRunRerun(), retryJson);
-        boolean nonzeroExecutionStatus = firstRunExitStatus != 0
-                || retryExitStatus.filter(status -> status != 0).isPresent();
+        boolean expectedPass = classification.outcome() == OverallOutcome.PASS
+                && firstRunExitStatus == 0
+                && retryExitStatus.isEmpty();
+        boolean expectedRecovery = classification.outcome() == OverallOutcome.FLAKY_PASS
+                && firstRunExitStatus == 1
+                && retryExitStatus.equals(Optional.of(0));
         int exitCode = executionErrors.isEmpty()
-                && !nonzeroExecutionStatus
+                && (expectedPass || expectedRecovery)
                 ? exitCode(classification.outcome())
                 : 1;
         WorkflowResult result = new WorkflowResult(

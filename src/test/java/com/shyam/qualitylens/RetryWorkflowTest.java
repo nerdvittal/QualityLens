@@ -52,6 +52,7 @@ class RetryWorkflowTest {
 
         assertEquals(List.of("first"), calls);
         assertEquals(OverallOutcome.PASS, result.classification().outcome());
+        assertEquals(0, result.exitCode());
         assertEquals(Optional.empty(), result.retryExitStatus());
         assertFalse(Files.exists(target.resolve("retry.json")));
         assertReportContains(target.resolve("retry-classification.json"), "\"outcome\":\"PASS\"");
@@ -94,14 +95,15 @@ class RetryWorkflowTest {
         assertEquals(1, result.firstRunExitStatus());
         assertEquals(Optional.of(0), result.retryExitStatus());
         assertEquals(OverallOutcome.FLAKY_PASS, result.classification().outcome());
-        assertEquals(1, result.exitCode());
-        assertReportContains(target.resolve("retry-classification.json"), "\"workflowExitCode\":1");
+        assertEquals(0, result.exitCode());
+        assertReportContains(target.resolve("retry-classification.json"), "\"workflowExitCode\":0");
         assertEquals(html, Files.readString(target.resolve("cucumber-report.html"),
                 StandardCharsets.UTF_8));
         assertEquals(featureJson("failed"), Files.readString(target.resolve("first-run.json"),
                 StandardCharsets.UTF_8));
         assertEquals(rerun, Files.readString(target.resolve("first-run-rerun.txt"),
                 StandardCharsets.UTF_8));
+        assertTrue(Files.isRegularFile(target.resolve("retry.json")));
     }
 
     @Test
@@ -129,6 +131,131 @@ class RetryWorkflowTest {
         assertTrue(Files.isRegularFile(report));
         assertReportContains(report, "\"outcome\":\"EVIDENCE_ERROR\"");
         assertReportContains(report, "\"evidenceIssues\"");
+    }
+
+    @Test
+    void missingFirstRunEvidenceCannotReturnSuccessfulWorkflowResult() throws Exception {
+        Path target = temporaryDirectory.resolve("target");
+        RetryWorkflow workflow = new RetryWorkflow(target, new RetryWorkflow.ExecutionSteps() {
+            @Override
+            public int runFirstRun(RetryWorkflow.WorkflowPaths paths) {
+                return 0;
+            }
+
+            @Override
+            public int runRetry(Path rerunFile, RetryWorkflow.WorkflowPaths paths) {
+                throw new AssertionError("Retry must not run without a rerun file");
+            }
+        });
+
+        RetryWorkflow.WorkflowResult result = workflow.execute();
+
+        assertEquals(OverallOutcome.EVIDENCE_ERROR, result.classification().outcome());
+        assertEquals(1, result.exitCode());
+        assertTrue(Files.isRegularFile(target.resolve("retry-classification.json")));
+        assertTrue(Files.isRegularFile(target.resolve("retry-classification.html")));
+    }
+
+    @Test
+    void missingRetryEvidenceCannotReturnSuccessfulWorkflowResult() throws Exception {
+        Path target = temporaryDirectory.resolve("target");
+        RetryWorkflow workflow = new RetryWorkflow(target, new RetryWorkflow.ExecutionSteps() {
+            @Override
+            public int runFirstRun(RetryWorkflow.WorkflowPaths paths) throws IOException {
+                write(paths.firstRunJson(), featureJson("failed"));
+                write(paths.firstRunRerun(), FEATURE_URI + ":" + SCENARIO_LINE);
+                return 1;
+            }
+
+            @Override
+            public int runRetry(Path rerunFile, RetryWorkflow.WorkflowPaths paths) {
+                return 0;
+            }
+        });
+
+        RetryWorkflow.WorkflowResult result = workflow.execute();
+
+        assertEquals(OverallOutcome.EVIDENCE_ERROR, result.classification().outcome());
+        assertEquals(1, result.exitCode());
+        assertReportContains(target.resolve("retry-classification.json"), "\"evidenceIssues\"");
+    }
+
+    @Test
+    void firstRunExecutionErrorCannotReturnSuccessfulWorkflowResult() throws Exception {
+        Path target = temporaryDirectory.resolve("target");
+        RetryWorkflow workflow = new RetryWorkflow(target, new RetryWorkflow.ExecutionSteps() {
+            @Override
+            public int runFirstRun(RetryWorkflow.WorkflowPaths paths) throws IOException {
+                throw new IOException("first run failed to start");
+            }
+
+            @Override
+            public int runRetry(Path rerunFile, RetryWorkflow.WorkflowPaths paths) {
+                throw new AssertionError("Retry must not run without first-run evidence");
+            }
+        });
+
+        RetryWorkflow.WorkflowResult result = workflow.execute();
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.executionErrors().stream()
+                .anyMatch(error -> error.contains("first run failed to start")));
+        assertReportContains(target.resolve("retry-classification.json"), "\"executionErrors\"");
+        assertReportContains(target.resolve("retry-classification.html"), "Execution errors");
+    }
+
+    @Test
+    void unresolvedRetryFailureReturnsNonzeroAndWritesClassificationReports() throws Exception {
+        Path target = temporaryDirectory.resolve("target");
+        RetryWorkflow workflow = new RetryWorkflow(target, new RetryWorkflow.ExecutionSteps() {
+            @Override
+            public int runFirstRun(RetryWorkflow.WorkflowPaths paths) throws IOException {
+                write(paths.firstRunJson(), featureJson("failed"));
+                write(paths.firstRunRerun(), FEATURE_URI + ":" + SCENARIO_LINE);
+                return 1;
+            }
+
+            @Override
+            public int runRetry(Path rerunFile, RetryWorkflow.WorkflowPaths paths) throws IOException {
+                write(paths.retryJson(), featureJson("failed"));
+                return 1;
+            }
+        });
+
+        RetryWorkflow.WorkflowResult result = workflow.execute();
+
+        assertEquals(OverallOutcome.FLAKY_FAIL, result.classification().outcome());
+        assertEquals(1, result.exitCode());
+        assertTrue(Files.isRegularFile(target.resolve("retry-classification.json")));
+        assertTrue(Files.isRegularFile(target.resolve("retry-classification.html")));
+        assertTrue(Files.isRegularFile(target.resolve("first-run.json")));
+        assertTrue(Files.isRegularFile(target.resolve("retry.json")));
+    }
+
+    @Test
+    void retryExecutionErrorCannotBeReportedAsSuccessful() throws Exception {
+        Path target = temporaryDirectory.resolve("target");
+        RetryWorkflow workflow = new RetryWorkflow(target, new RetryWorkflow.ExecutionSteps() {
+            @Override
+            public int runFirstRun(RetryWorkflow.WorkflowPaths paths) throws IOException {
+                write(paths.firstRunJson(), featureJson("failed"));
+                write(paths.firstRunRerun(), FEATURE_URI + ":" + SCENARIO_LINE);
+                return 1;
+            }
+
+            @Override
+            public int runRetry(Path rerunFile, RetryWorkflow.WorkflowPaths paths) throws IOException {
+                throw new IOException("retry process failed to start");
+            }
+        });
+
+        RetryWorkflow.WorkflowResult result = workflow.execute();
+
+        assertEquals(1, result.exitCode());
+        assertTrue(result.executionErrors().stream()
+                .anyMatch(error -> error.contains("retry process failed to start")));
+        assertReportContains(target.resolve("retry-classification.json"), "\"executionErrors\"");
+        assertReportContains(target.resolve("retry-classification.html"), "Execution errors");
     }
 
     @Test
@@ -223,6 +350,30 @@ class RetryWorkflowTest {
         assertEquals(1, result.exitCode());
         assertReportContains(target.resolve("retry-classification.json"), "\"workflowExitCode\":1");
         assertReportContains(target.resolve("retry-classification.html"), "workflow exit code: 1");
+    }
+
+    @Test
+    void unexpectedFirstRunStatusCannotBeMaskedByARecoveredScenario() throws Exception {
+        Path target = temporaryDirectory.resolve("target");
+        RetryWorkflow workflow = new RetryWorkflow(target, new RetryWorkflow.ExecutionSteps() {
+            @Override
+            public int runFirstRun(RetryWorkflow.WorkflowPaths paths) throws IOException {
+                write(paths.firstRunJson(), featureJson("failed"));
+                write(paths.firstRunRerun(), FEATURE_URI + ":" + SCENARIO_LINE);
+                return 2;
+            }
+
+            @Override
+            public int runRetry(Path rerunFile, RetryWorkflow.WorkflowPaths paths) throws IOException {
+                write(paths.retryJson(), featureJson("passed"));
+                return 0;
+            }
+        });
+
+        RetryWorkflow.WorkflowResult result = workflow.execute();
+
+        assertEquals(OverallOutcome.FLAKY_PASS, result.classification().outcome());
+        assertEquals(1, result.exitCode());
     }
 
     @Test

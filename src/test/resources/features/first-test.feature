@@ -8,4 +8,4 @@ Feature: QualityLens Smoke Test
   Scenario: Verify successful login
     Given I open the SauceDemo home page
     When I log in with username "standard_user" and password "secret_sauce"
-    Then the Products page is displayed
+    Then the SauceDemo home page is displayed
